@@ -1,0 +1,59 @@
+# Ocean Synaptics vendored release: builds the zenoh-bridge-ros2dds .deb for
+# amd64 and arm64 on Ubuntu 24.04 (the FUSION NCB image's base) and attaches both
+# to a GitHub release named after the tag. Runs on tags `<upstream>-fusion.<n>`.
+name: Fusion release
+
+on:
+  push:
+    tags: ["*-fusion.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  deb:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain and build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake clang libclang-dev
+          rustup show active-toolchain
+          cargo install cargo-deb --locked
+      - name: Build
+        run: cargo build --release -p zenoh-bridge-ros2dds
+      - name: Package
+        run: |
+          # 1.9.0-fusion.1 -> 1.9.0+fusion.1, so the package sorts above upstream's 1.9.0
+          version="${GITHUB_REF_NAME/-fusion./+fusion.}"
+          cargo deb -p zenoh-bridge-ros2dds --no-build --deb-version "${version}" \
+            --output "target/zenoh-bridge-ros2dds_${version}_${{ matrix.arch }}.deb"
+          sha256sum target/*.deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.arch }}
+          path: target/*.deb
+
+  release:
+    needs: deb
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum *.deb > SHA256SUMS
+          gh release create "${GITHUB_REF_NAME}" *.deb SHA256SUMS -R "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "zenoh-bridge-ros2dds ${GITHUB_REF_NAME%%-fusion.*} with the matching-listener fix for eclipse-zenoh/zenoh-plugin-ros2dds#700."
