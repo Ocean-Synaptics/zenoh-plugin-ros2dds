@@ -1,6 +1,8 @@
 # Ocean Synaptics vendored release: builds the zenoh-bridge-ros2dds .deb for
 # amd64 and arm64 on Ubuntu 24.04 (the FUSION NCB image's base) and attaches both
 # to a GitHub release named after the tag. Runs on tags `<upstream>-fusion.<n>`.
+# The tag must be annotated: the bridge takes its version from `git describe`,
+# which ignores lightweight tags, and the build fails unless it reports the tag.
 name: Fusion release
 
 on:
@@ -8,7 +10,7 @@ on:
     tags: ["*-fusion.*"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   deb:
@@ -22,14 +24,22 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch the annotated tag
+        # checkout leaves a tag ref that points straight at the commit
+        run: git fetch --force origin "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
       - name: Toolchain and build deps
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake clang libclang-dev
           rustup show active-toolchain
-          cargo install cargo-deb --locked
+          cargo install cargo-deb --locked --version 3.8.0
       - name: Build
-        run: cargo build --release -p zenoh-bridge-ros2dds
+        run: |
+          cargo build --release --locked -p zenoh-bridge-ros2dds
+          ./target/release/zenoh-bridge-ros2dds --version | grep -F "zenoh-bridge-ros2dds v${GITHUB_REF_NAME}"
       - name: Package
         run: |
           # 1.9.0-fusion.1 -> 1.9.0+fusion.1, so the package sorts above upstream's 1.9.0
@@ -45,6 +55,8 @@ jobs:
   release:
     needs: deb
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
